@@ -22,7 +22,7 @@
         [ 'OS=="win"', {
           'sources': [ 'src/windows/BluetoothSerialPort.cc', 'src/windows/DeviceINQ.cc', 'src/windows/BTSerialPortBinding.cc', 'src/windows/BluetoothHelpers.cc' ],
           'include_dirs' : [ "<!(node -e \"require('nan')\")", 'src', 'src/windows' ],
-          'libraries': [ '-lkernel32.lib', '-luser32.lib', '-lWs2_32.lib' ]
+          'libraries': [ '-lkernel32.lib', '-luser32.lib', '-lWs2_32.lib', '-lirprops.lib' ]
         }],
       ]
     },

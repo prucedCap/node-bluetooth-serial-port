@@ -16,6 +16,11 @@
 #include <uv.h>
 #include <nan.h>
 #include "ngx-queue.h"
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <sstream>
+#include "BluetoothAPIs.h"
 
 #ifdef __APPLE__
 #import <Foundation/NSObject.h>

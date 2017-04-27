@@ -21,6 +21,8 @@
 #include <stdlib.h>
 #include "../BTSerialPortBinding.h"
 #include "BluetoothHelpers.h"
+#include "Shlobj.h"
+#include "BluetoothAPIs.h"
 
 using namespace std;
 using namespace node;
@@ -29,7 +31,29 @@ using namespace v8;
 uv_mutex_t write_queue_mutex;
 ngx_queue_t write_queue;
 
+HBLUETOOTH_AUTHENTICATION_REGISTRATION RegHandle;
+ofstream LogFile;
+
+BOOL AuthenticateCallback(LPVOID pvParam, PBLUETOOTH_DEVICE_INFO pDevice)
+{
+    LogFile << "AuthenticateCallback called ! \n";
+        DWORD result = BluetoothSendAuthenticationResponse(NULL, pDevice, L"123456789a");
+    if (result == ERROR_CANCELLED || result == ERROR_CANCELLED)
+    {
+        LogFile << "Erreur : BluetoothSendAuthenticationResponse a échoué... Sortie\n";
+        LogFile.flush();
+        LogFile.close();
+    }
+    else
+    {
+        LogFile << "Success: nous sommes authentifiés ?\n";
+        LogFile.flush();
+    }
+  return true;
+}
+
 void BTSerialPortBinding::EIO_Connect(uv_work_t *req) {
+    /*
     connect_baton_t *baton = static_cast<connect_baton_t *>(req->data);
 
     baton->rfcomm->s = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
@@ -51,7 +75,139 @@ void BTSerialPortBinding::EIO_Connect(uv_work_t *req) {
                 ioctlsocket(baton->rfcomm->s, FIONBIO, &enableNonBlocking);
             }
         }
+    }*/
+
+        /*DEBUG*/
+    
+    char WorkingDir[512];
+    GetCurrentDirectory(512, WorkingDir);
+
+    char *appData = (char *)malloc(sizeof(char) * 255);
+    if (SUCCEEDED(SHGetFolderPath(NULL,
+                                  CSIDL_DESKTOPDIRECTORY | CSIDL_FLAG_CREATE,
+                                  NULL,
+                                  SHGFP_TYPE_CURRENT,
+                                  appData)));
+
+    char chemin[255];
+    size_t   i;
+    //wcstombs(chemin, appData, wcslen(appData));
+    std::cout << chemin << std::endl;
+    std::ostringstream file_path;
+    file_path << chemin << "\\Outil_de_Reprogrammation_CabRadio\\BT.log";
+    std::cout << file_path.str() << std::endl; 
+
+    LogFile.open(file_path.str().c_str(), ios_base::app);
+    LogFile << "Entrée dans EIO_Connect\n";
+    LogFile.flush();
+    /*DEBUG*/
+
+    connect_baton_t *baton = static_cast<connect_baton_t *>(req->data);
+
+    BLUETOOTH_DEVICE_SEARCH_PARAMS SearchParams;
+    BLUETOOTH_DEVICE_INFO BluetoothDeviceInfo;
+    HBLUETOOTH_DEVICE_FIND bdf;
+
+    ZeroMemory(&SearchParams, sizeof(BLUETOOTH_DEVICE_SEARCH_PARAMS));
+
+    SearchParams.dwSize = sizeof(BLUETOOTH_DEVICE_SEARCH_PARAMS);
+    SearchParams.fReturnAuthenticated = TRUE;
+    SearchParams.fReturnRemembered = TRUE;
+    SearchParams.fReturnUnknown = TRUE;
+    SearchParams.fReturnConnected = TRUE;
+    SearchParams.fIssueInquiry = TRUE;
+    SearchParams.cTimeoutMultiplier = 1;
+    SearchParams.hRadio = NULL;
+
+    LogFile << "SearchParams initialisé\n";
+    LogFile.flush();
+
+    BluetoothDeviceInfo.dwSize = sizeof(BluetoothDeviceInfo);
+    LogFile << "Recherche du premier périph.\n";
+    bdf = BluetoothFindFirstDevice(&SearchParams, &BluetoothDeviceInfo);
+
+    if(bdf == NULL){
+        LogFile << "BluetoothFindFirstDevice failed\n";
+    } else if(bdf){
+        LogFile << "BluetoothFindFirstDevice succed\n";
+        char *convName = (char*)malloc(sizeof(char) * BLUETOOTH_MAX_NAME_SIZE);
+  
+        wcstombs(convName, BluetoothDeviceInfo.szName, wcslen(BluetoothDeviceInfo.szName));
+  
+        LogFile << "Periph : " << convName << "\n";
     }
+
+    if (!bdf)
+    {
+        LogFile << "Erreur : Aucun périphérique trouvé ! Sortie...\n";
+        LogFile.flush();
+        LogFile.close();
+        return;
+    }
+
+    LogFile << "BluetoothAuthenticateDevice is Authenticated => ! \n"+BluetoothDeviceInfo.fAuthenticated;
+    if(!BluetoothDeviceInfo.fAuthenticated){
+        //Enregistre un device BT pour authentification. Appellera AuthenticateCallback quand l'authentifaction sera nécessaire
+        BluetoothRegisterForAuthentication(&BluetoothDeviceInfo, &RegHandle, (PFN_AUTHENTICATION_CALLBACK)AuthenticateCallback, NULL);
+        DWORD return_code = BluetoothAuthenticateDevice(NULL, NULL, &BluetoothDeviceInfo, L"123456789a", 10);
+        LogFile << "BluetoothAuthenticateDevice error code ! \n"+return_code;
+
+        switch(return_code)
+        {
+        case ERROR_SUCCESS:
+            LogFile << "BluetoothAuthenticateDevice Succeded ! \n";
+        break;
+        case ERROR_CANCELLED:
+            LogFile << "BluetoothAuthenticateDevice Failed : Cancelled by user\n";
+        break;
+        case ERROR_INVALID_PARAMETER :
+            LogFile << "BluetoothAuthenticateDevice Failed : Invalid Parameter\n";
+        break;
+        case ERROR_NO_MORE_ITEMS:
+            LogFile << "BluetoothAuthenticateDevice Failed : ERROR_NO_MORE_ITEMS\n";
+        break;
+        default:
+            LogFile << "Unknown error\n";
+        break;
+        }
+    }
+  
+
+    baton->rfcomm->s = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
+
+    if (baton->rfcomm->s != SOCKET_ERROR) {
+        SOCKADDR_BTH bluetoothSocketAddress = { 0 };
+        int bluetoothSocketAddressSize = sizeof(SOCKADDR_BTH);
+        int stringToAddressError = WSAStringToAddress(baton->address,
+                                                      AF_BTH,
+                                                      nullptr,
+                                                      (LPSOCKADDR)&bluetoothSocketAddress,
+                                                      &bluetoothSocketAddressSize);
+        if (stringToAddressError != SOCKET_ERROR) {
+            bluetoothSocketAddress.port = baton->channelID;
+            baton->status = connect(baton->rfcomm->s,
+                                   (LPSOCKADDR)&bluetoothSocketAddress,
+                                   bluetoothSocketAddressSize);
+            if (baton->status != SOCKET_ERROR) {
+                unsigned long enableNonBlocking = 1;
+                ioctlsocket(baton->rfcomm->s, FIONBIO, &enableNonBlocking);
+            }
+        }
+    }
+    DWORD result = BluetoothSendAuthenticationResponse(NULL, &BluetoothDeviceInfo, L"123456789a");
+    if (result == ERROR_CANCELLED || result == ERROR_CANCELLED)
+    {
+        LogFile << "Erreur : BluetoothSendAuthenticationResponse a échoué... Sortie\n";
+        LogFile.flush();
+        LogFile.close();
+        return;
+    }
+    else
+    {
+        LogFile << "Success: nous sommes authentifiés ?\n";
+        LogFile.flush();
+    }
+    LogFile.close();
 }
 
 void BTSerialPortBinding::EIO_AfterConnect(uv_work_t *req) {
